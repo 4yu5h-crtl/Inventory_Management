@@ -106,7 +106,3 @@ InventoryItem inventory[MAX_ITEMS] = {
 - If multiple counts are registered for a single object, increase the `DEBOUNCE_TIME` constant
 - If the system doesn't connect to WiFi, check your credentials and network
 - If the web interface doesn't load, check the IP address in the Serial Monitor
-
-## License
-
-This project is open source and available under the MIT License. 
