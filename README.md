@@ -15,8 +15,8 @@ Connect the ultrasonic sensor to the ESP8266/NodeMCU as follows:
 
 - Ultrasonic Sensor VCC → ESP8266 3.3V
 - Ultrasonic Sensor GND → ESP8266 GND
-- Ultrasonic Sensor TRIG → ESP8266 GPIO5
-- Ultrasonic Sensor ECHO → ESP8266 GPIO18
+- Ultrasonic Sensor TRIG → ESP8266 D5
+- Ultrasonic Sensor ECHO → ESP8266 D6
 
 ## Software Requirements
 
