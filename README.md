@@ -1,13 +1,12 @@
 # Inventory Management System
 
-This project implements an inventory management system using an ESP8266/NodeMCU microcontroller and an ultrasonic sensor. The system allows you to track the quantity of different items in a box by measuring the distance with the ultrasonic sensor.
+This project implements an inventory management system using an ESP8266/NodeMCU microcontroller and an ultrasonic sensor. The system allows you to track the quantity of different items by detecting objects in front of the ultrasonic sensor.
 
 ## Hardware Requirements
 
 - ESP8266 or NodeMCU board
 - HC-SR04 Ultrasonic Sensor
 - Jumper wires
-- A box to hold the items
 - Power supply (USB cable or external power)
 
 ## Wiring
@@ -54,8 +53,8 @@ Connect the ultrasonic sensor to the ESP8266/NodeMCU as follows:
    ```
 3. Adjust the constants for your specific setup:
    ```cpp
-   const int EMPTY_BOX_DISTANCE = 30;  // Distance when box is empty (cm)
-   const int ITEM_HEIGHT = 5;  // Approximate height of one item (cm)
+   const int DETECTION_THRESHOLD = 30;  // Distance threshold for object detection (cm)
+   const int DEBOUNCE_TIME = 1000;  // Debounce time in milliseconds
    ```
 4. Select your board from Tools > Board menu
 5. Select the correct port from Tools > Port menu
@@ -69,27 +68,44 @@ Connect the ultrasonic sensor to the ESP8266/NodeMCU as follows:
 4. You'll see the inventory management interface with a grid of items
 5. To use the system:
    - Click on an item (e.g., "Milk") to select it
-   - Place the corresponding items in the box
-   - The system will automatically count the items based on the ultrasonic sensor readings
-   - The count will be displayed on the web interface
+   - Place an object in front of the ultrasonic sensor
+   - The count will increase by 1 each time an object is detected
    - Click on another item to switch to counting a different item
+   - Click "Reset Count" to reset the count for the selected item
 
-## Calibration
+## How It Works
 
-The system needs to be calibrated to work correctly:
+The system uses a simple detection mechanism:
+1. When you select an item on the web interface, the system starts monitoring for objects
+2. When an object is detected in front of the ultrasonic sensor (distance less than the threshold), the count for the selected item increases by 1
+3. A debounce mechanism prevents multiple counts for a single object
+4. The web interface automatically refreshes every 2 seconds to show the updated counts
 
-1. Make sure the box is empty
-2. Click the "Calibrate Empty Box" button on the web interface
-3. The system will record the current distance as the "empty box" distance
-4. Now you can start adding items to the box
+## Customization
 
+You can customize the inventory items by modifying the `inventory` array in the code:
+
+```cpp
+InventoryItem inventory[MAX_ITEMS] = {
+  {"Milk", 0},
+  {"Chocolate", 0},
+  {"Bread", 0},
+  {"Eggs", 0},
+  {"Cereal", 0},
+  {"Pen", 0}, 
+  {"Pencil", 0},
+  {"Notebook", 0},
+  {"Book", 0},
+  {"Adhesive Tape", 0}
+};
+```
 
 ## Troubleshooting
 
-- If the sensor readings are inaccurate, try adjusting the `ITEM_HEIGHT` constant
+- If the sensor is too sensitive or not sensitive enough, adjust the `DETECTION_THRESHOLD` constant
+- If multiple counts are registered for a single object, increase the `DEBOUNCE_TIME` constant
 - If the system doesn't connect to WiFi, check your credentials and network
 - If the web interface doesn't load, check the IP address in the Serial Monitor
-- If the count is incorrect, try recalibrating the empty box
 
 ## License
 
