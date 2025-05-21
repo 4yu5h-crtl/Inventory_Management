@@ -7,8 +7,8 @@ const char* ssid = "your-wifi-ssid";
 const char* password = "your-wifi-password";
 
 // Pin definitions
-const int TRIG_PIN = 5;  // Ultrasonic sensor trigger pin (GPIO5)
-const int ECHO_PIN = 18;  // Ultrasonic sensor echo pin (GPIO18)
+const int TRIG_PIN = D5;  // Ultrasonic sensor trigger pin (GPIO14)
+const int ECHO_PIN = D6;  // Ultrasonic sensor echo pin (GPIO12)
 
 // Constants for ultrasonic sensor
 const int MAX_DISTANCE = 200;  // Maximum distance to measure (cm)
