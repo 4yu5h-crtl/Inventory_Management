@@ -3,8 +3,8 @@
 #include <ArduinoJson.h>
 
 // WiFi credentials
-const char* ssid = "Mit";
-const char* password = "asdfghjkl";
+const char* ssid = "your-wifi";
+const char* password = "your-password";
 
 // Pin definitions
 const int TRIG_PIN = D6;
