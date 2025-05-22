@@ -3,22 +3,23 @@
 #include <ArduinoJson.h>
 
 // WiFi credentials
-const char* ssid = "your-wifi-ssid";
-const char* password = "your-wifi-password";
+const char* ssid = "Mit";
+const char* password = "asdfghjkl";
 
 // Pin definitions
-const int TRIG_PIN = D5;  // Ultrasonic sensor trigger pin (GPIO14)
-const int ECHO_PIN = D6;  // Ultrasonic sensor echo pin (GPIO12)
+const int TRIG_PIN = D6;
+const int ECHO_PIN = D5;
 
-// Constants for ultrasonic sensor
-const int MAX_DISTANCE = 200;  // Maximum distance to measure (cm)
-const int DETECTION_THRESHOLD = 30;  // Distance threshold for object detection (cm)
-const int DEBOUNCE_TIME = 1000;  // Debounce time in milliseconds
+// Constants
+const int MAX_DISTANCE = 200;
+const int DETECTION_THRESHOLD = 30;
+const int DEBOUNCE_TIME = 1000;
+const int SENSOR_READINGS = 5; // Number of readings to average
 
 // Web server
 ESP8266WebServer server(80);
 
-// Inventory data
+// Inventory structure
 struct InventoryItem {
   String name;
   int count;
@@ -26,30 +27,19 @@ struct InventoryItem {
 
 const int MAX_ITEMS = 10;
 InventoryItem inventory[MAX_ITEMS] = {
-  {"Milk", 0},
-  {"Chocolate", 0},
-  {"Bread", 0},
-  {"Eggs", 0},
-  {"Cereal", 0},
-  {"Pen", 0}, 
-  {"Pencil", 0},
-  {"Notebook", 0},
-  {"Book", 0},
-  {"Adhesive Tape", 0}
+  {"Milk", 0}, {"Chocolate", 0}, {"Bread", 0}, {"Eggs", 0}, {"Cereal", 0},
+  {"Pen", 0}, {"Pencil", 0}, {"Notebook", 0}, {"Book", 0}, {"Adhesive Tape", 0}
 };
 
-int currentItemIndex = 0;  // Index of the currently selected item
-bool objectDetected = false;  // Flag to track if an object is currently detected
-unsigned long lastDetectionTime = 0;  // Time of the last detection
+int currentItemIndex = 0;
+bool objectPreviouslyDetected = false;
+unsigned long lastDetectionTime = 0;
 
 void setup() {
-  Serial.begin(115200);
-  
-  // Initialize ultrasonic sensor pins
+  Serial.begin(9600);
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
-  
-  // Connect to WiFi
+
   WiFi.begin(ssid, password);
   Serial.print("Connecting to WiFi");
   while (WiFi.status() != WL_CONNECTED) {
@@ -57,16 +47,13 @@ void setup() {
     Serial.print(".");
   }
   Serial.println();
-  Serial.print("Connected to WiFi. IP address: ");
-  Serial.println(WiFi.localIP());
-  
-  // Set up web server routes
+  Serial.println("Connected, IP address: " + WiFi.localIP().toString());
+
   server.on("/", HTTP_GET, handleRoot);
   server.on("/api/inventory", HTTP_GET, handleGetInventory);
   server.on("/api/select-item", HTTP_POST, handleSelectItem);
   server.on("/api/reset-count", HTTP_POST, handleResetCount);
-  
-  // Start web server
+  server.on("/api/reduce-count", HTTP_POST, handleReduceCount);
   server.begin();
   Serial.println("HTTP server started");
 }
@@ -74,34 +61,44 @@ void setup() {
 void loop() {
   server.handleClient();
   
-  // Read ultrasonic sensor
-  int distance = readUltrasonicDistance();
-  
-  // Check if an object is detected (distance less than threshold)
-  bool currentObjectDetected = (distance < DETECTION_THRESHOLD);
-  
-  // If object is detected and wasn't detected before, and enough time has passed since last detection
-  if (currentObjectDetected && !objectDetected && (millis() - lastDetectionTime > DEBOUNCE_TIME)) {
-    // Increment count for the selected item
-    if (currentItemIndex < MAX_ITEMS) {
+  // Get average distance from multiple readings
+  int distance = getAverageDistance();
+  bool objectCurrentlyDetected = distance < DETECTION_THRESHOLD;
+
+  // Only increment count if:
+  // 1. Object is currently detected
+  // 2. Object was not previously detected (to avoid multiple counts)
+  // 3. Enough time has passed since last detection (debounce)
+  if (objectCurrentlyDetected && !objectPreviouslyDetected && millis() - lastDetectionTime > DEBOUNCE_TIME) {
+    if (currentItemIndex >= 0 && currentItemIndex < MAX_ITEMS) {
       inventory[currentItemIndex].count++;
-      Serial.print("Object detected! Updated count for ");
-      Serial.print(inventory[currentItemIndex].name);
-      Serial.print(": ");
-      Serial.println(inventory[currentItemIndex].count);
-      
-      // Update the last detection time
+      Serial.println("Detected: " + inventory[currentItemIndex].name + " -> " + String(inventory[currentItemIndex].count));
       lastDetectionTime = millis();
     }
   }
-  
-  // Update the object detection state
-  objectDetected = currentObjectDetected;
-  
-  delay(100);  // Small delay to prevent too frequent readings
+
+  objectPreviouslyDetected = objectCurrentlyDetected;
+  delay(100);
 }
 
-// Function to read distance from ultrasonic sensor
+// Get average distance from multiple readings to reduce noise
+int getAverageDistance() {
+  int totalDistance = 0;
+  int validReadings = 0;
+  
+  for (int i = 0; i < SENSOR_READINGS; i++) {
+    int distance = readUltrasonicDistance();
+    if (distance > 0 && distance < MAX_DISTANCE) {
+      totalDistance += distance;
+      validReadings++;
+    }
+    delay(10); // Small delay between readings
+  }
+  
+  // Return average if we have valid readings, otherwise return MAX_DISTANCE
+  return (validReadings > 0) ? totalDistance / validReadings : MAX_DISTANCE;
+}
+
 int readUltrasonicDistance() {
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
@@ -109,210 +106,114 @@ int readUltrasonicDistance() {
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
   
-  long duration = pulseIn(ECHO_PIN, HIGH);
-  int distance = duration * 0.034 / 2;  // Calculate distance in cm
+  // Increase timeout to 50ms for more reliable readings
+  long duration = pulseIn(ECHO_PIN, HIGH, 50000);
   
-  // Limit distance to maximum
-  if (distance > MAX_DISTANCE) {
-    distance = MAX_DISTANCE;
+  // Check if we got a valid reading
+  if (duration == 0) {
+    return MAX_DISTANCE; // Return max distance if no echo received
   }
   
-  return distance;
+  int distance = duration * 0.034 / 2;
+  return (distance > MAX_DISTANCE) ? MAX_DISTANCE : distance;
 }
 
-// Web server handlers
 void handleRoot() {
-  String html = "<!DOCTYPE html>";
-  html += "<html>";
-  html += "<head>";
-  html += "<meta charset='UTF-8'>";
-  html += "<meta name='viewport' content='width=device-width, initial-scale=1.0'>";
-  html += "<title>Inventory Management System</title>";
-  html += "<style>";
-  html += "body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }";
-  html += "h1 { color: #333; text-align: center; }";
-  html += ".container { max-width: 800px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }";
-  html += ".item-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px; margin-top: 20px; }";
-  html += ".item-card { background-color: #f9f9f9; border: 1px solid #ddd; border-radius: 4px; padding: 15px; text-align: center; cursor: pointer; transition: all 0.3s; }";
-  html += ".item-card:hover { transform: translateY(-5px); box-shadow: 0 5px 15px rgba(0,0,0,0.1); }";
-  html += ".item-card.selected { background-color: #e3f2fd; border-color: #2196f3; }";
-  html += ".item-count { font-size: 24px; font-weight: bold; margin: 10px 0; color: #2196f3; }";
-  html += ".controls { margin-top: 20px; display: flex; justify-content: space-between; }";
-  html += "button { background-color: #2196f3; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; }";
-  html += "button:hover { background-color: #0b7dda; }";
-  html += ".instructions { background-color: #fffde7; padding: 15px; border-radius: 4px; margin-top: 20px; border-left: 4px solid #ffd600; }";
-  html += "</style>";
-  html += "</head>";
-  html += "<body>";
-  html += "<div class='container'>";
-  html += "<h1>Inventory Management System</h1>";
-  html += "<div class='instructions'>";
-  html += "<p><strong>How to use:</strong></p>";
-  html += "<ol>";
-  html += "<li>Click on an item to select it</li>";
-  html += "<li>Place an object in front of the ultrasonic sensor</li>";
-  html += "<li>The count will increase by 1 each time an object is detected</li>";
-  html += "<li>Click 'Reset Count' to reset the count for the selected item</li>";
-  html += "</ol>";
-  html += "</div>";
-  html += "<div class='item-grid' id='itemGrid'>";
-  // Items will be populated by JavaScript
-  html += "</div>";
-  html += "<div class='controls'>";
-  html += "<button id='resetBtn'>Reset Count</button>";
-  html += "<button id='refreshBtn'>Refresh</button>";
-  html += "</div>";
-  html += "</div>";
-  
-  html += "<script>";
-  html += "let selectedItemIndex = -1;";
-  html += "let inventory = [];";
-  
-  // Function to fetch inventory data
-  html += "function fetchInventory() {";
-  html += "  fetch('/api/inventory')";
-  html += "    .then(response => response.json())";
-  html += "    .then(data => {";
-  html += "      inventory = data;";
-  html += "      updateItemGrid();";
-  html += "    })";
-  html += "    .catch(error => console.error('Error fetching inventory:', error));";
-  html += "}";
-  
-  // Function to update the item grid
-  html += "function updateItemGrid() {";
-  html += "  const itemGrid = document.getElementById('itemGrid');";
-  html += "  itemGrid.innerHTML = '';";
-  html += "  inventory.forEach((item, index) => {";
-  html += "    if (item.name) {";  // Only show items with names
-  html += "      const itemCard = document.createElement('div');";
-  html += "      itemCard.className = 'item-card' + (index === selectedItemIndex ? ' selected' : '');";
-  html += "      itemCard.innerHTML = `";
-  html += "        <div>${item.name}</div>";
-  html += "        <div class='item-count'>${item.count}</div>";
-  html += "      `;";
-  html += "      itemCard.onclick = () => selectItem(index);";
-  html += "      itemGrid.appendChild(itemCard);";
-  html += "    }";
-  html += "  });";
-  html += "}";
-  
-  // Function to select an item
-  html += "function selectItem(index) {";
-  html += "  selectedItemIndex = index;";
-  html += "  fetch('/api/select-item', {";
-  html += "    method: 'POST',";
-  html += "    headers: { 'Content-Type': 'application/json' },";
-  html += "    body: JSON.stringify({ index: index })";
-  html += "  })";
-  html += "    .then(response => response.json())";
-  html += "    .then(data => {";
-  html += "      if (data.success) {";
-  html += "        updateItemGrid();";
-  html += "      }";
-  html += "    })";
-  html += "    .catch(error => console.error('Error selecting item:', error));";
-  html += "}";
-  
-  // Function to reset count
-  html += "function resetCount() {";
-  html += "  if (selectedItemIndex >= 0) {";
-  html += "    fetch('/api/reset-count', {";
-  html += "      method: 'POST',";
-  html += "      headers: { 'Content-Type': 'application/json' },";
-  html += "      body: JSON.stringify({ index: selectedItemIndex })";
-  html += "    })";
-  html += "      .then(response => response.json())";
-  html += "      .then(data => {";
-  html += "        if (data.success) {";
-  html += "          fetchInventory();";
-  html += "        }";
-  html += "      })";
-  html += "      .catch(error => console.error('Error resetting count:', error));";
-  html += "  } else {";
-  html += "    alert('Please select an item first');";
-  html += "  }";
-  html += "}";
-  
-  // Initialize the page
-  html += "document.addEventListener('DOMContentLoaded', () => {";
-  html += "  fetchInventory();";
-  html += "  document.getElementById('resetBtn').onclick = resetCount;";
-  html += "  document.getElementById('refreshBtn').onclick = fetchInventory;";
-  html += "  // Auto-refresh every 2 seconds";
-  html += "  setInterval(fetchInventory, 2000);";
-  html += "});";
-  
-  html += "</script>";
-  html += "</body>";
-  html += "</html>";
-  
-  server.send(200, "text/html", html);
+  server.send(200, "text/html", R"rawliteral(
+<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'>
+<title>Inventory System</title><style>
+body{font-family:Arial;background:#f5f5f5;padding:20px}
+.container{max-width:800px;margin:auto;background:white;padding:20px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}
+.instructions{background:#e3f2fd;padding:15px;border-radius:4px;margin-bottom:20px}
+.item-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:15px;margin-top:20px}
+.item-card{background:#f9f9f9;border:1px solid #ddd;border-radius:4px;padding:15px;text-align:center;cursor:pointer;transition:0.3s}
+.item-card:hover{transform:translateY(-5px);box-shadow:0 5px 15px rgba(0,0,0,0.1)}
+.item-card.selected{background:#e3f2fd;border-color:#2196f3}
+.item-count{font-size:24px;font-weight:bold;margin:10px 0;color:#2196f3}
+.controls{margin-top:20px;display:flex;justify-content:space-between}
+button{background:#2196f3;color:white;border:none;padding:10px 15px;border-radius:4px;cursor:pointer;margin-right:5px}
+button:hover{background:#0b7dda}
+button.remove{background:#f44336}
+button.remove:hover{background:#d32f2f}
+.status-bar{margin-top:15px;padding:10px;background:#f0f0f0;border-radius:4px;text-align:center;font-size:14px;color:#666}
+</style></head><body><div class='container'><h1>Inventory Management</h1>
+<div class='instructions'><h3>Instructions:</h3><ol>
+<li>Click an item to select it</li><li>Place an object in front of the sensor to add items</li><li>Click "Remove Item" to reduce count</li><li>Use Reset to clear count</li></ol></div>
+<div class='item-grid' id='itemGrid'></div>
+<div class='controls'><button id='resetBtn'>Reset Count</button><button id='removeBtn' class='remove'>Remove Item</button><button id='refreshBtn'>Refresh Now</button></div>
+<div class='status-bar' id='statusBar'>Last updated: Never</div></div>
+<script>
+let selectedItemIndex=-1;let inventory=[];
+let autoRefreshInterval = 1000; // Refresh every 1 second
+let lastUpdateTime = new Date();
+
+function updateStatusBar() {
+  const now = new Date();
+  const timeDiff = Math.floor((now - lastUpdateTime) / 1000);
+  document.getElementById('statusBar').textContent = `Last updated: ${timeDiff} seconds ago`;
+}
+
+function fetchInventory(){fetch('/api/inventory').then(r=>r.json()).then(data=>{inventory=data;updateItemGrid();lastUpdateTime=new Date();updateStatusBar();})}
+function updateItemGrid(){const g=document.getElementById('itemGrid');g.innerHTML='';
+inventory.forEach((item,i)=>{if(item.name){const c=document.createElement('div');
+c.className='item-card'+(i===selectedItemIndex?' selected':'');
+c.onclick=()=>selectItem(i);
+c.innerHTML=`<div>${item.name}</div><div class='item-count'>${item.count}</div>`;g.appendChild(c);}});}
+function selectItem(index){selectedItemIndex=index;
+fetch('/api/select-item',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({index})}).then(()=>updateItemGrid())}
+document.getElementById('resetBtn').addEventListener('click',()=>{if(selectedItemIndex===-1)return;
+fetch('/api/reset-count',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({index:selectedItemIndex})}).then(()=>fetchInventory())});
+document.getElementById('removeBtn').addEventListener('click',()=>{if(selectedItemIndex===-1)return;
+fetch('/api/reduce-count',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({index:selectedItemIndex})}).then(()=>fetchInventory())});
+document.getElementById('refreshBtn').addEventListener('click',fetchInventory);
+
+// Set up automatic refresh
+fetchInventory(); // Initial load
+setInterval(fetchInventory, autoRefreshInterval); // Auto refresh every 1 second
+setInterval(updateStatusBar, 1000); // Update status bar every second
+</script></body></html>)rawliteral");
 }
 
 void handleGetInventory() {
-  StaticJsonDocument<1024> doc;
-  JsonArray array = doc.to<JsonArray>();
-  
+  DynamicJsonDocument doc(1024);
+  JsonArray items = doc.to<JsonArray>();
   for (int i = 0; i < MAX_ITEMS; i++) {
-    if (inventory[i].name.length() > 0) {
-      JsonObject item = array.createNestedObject();
-      item["name"] = inventory[i].name;
-      item["count"] = inventory[i].count;
-    }
+    JsonObject item = items.createNestedObject();
+    item["name"] = inventory[i].name;
+    item["count"] = inventory[i].count;
   }
-  
-  String response;
-  serializeJson(doc, response);
-  server.send(200, "application/json", response);
+  String json;
+  serializeJson(doc, json);
+  server.send(200, "application/json", json);
 }
 
 void handleSelectItem() {
-  if (server.hasArg("plain")) {
-    StaticJsonDocument<200> doc;
-    DeserializationError error = deserializeJson(doc, server.arg("plain"));
-    
-    if (!error) {
-      int index = doc["index"];
-      if (index >= 0 && index < MAX_ITEMS) {
-        currentItemIndex = index;
-        
-        StaticJsonDocument<200> response;
-        response["success"] = true;
-        response["message"] = "Selected item: " + inventory[currentItemIndex].name;
-        
-        String responseStr;
-        serializeJson(response, responseStr);
-        server.send(200, "application/json", responseStr);
-        return;
-      }
-    }
-  }
-  
-  server.send(400, "application/json", "{\"success\":false,\"message\":\"Invalid request\"}");
+  DynamicJsonDocument doc(256);
+  deserializeJson(doc, server.arg("plain"));
+  currentItemIndex = doc["index"];
+  server.send(200, "text/plain", "Item selected");
 }
 
 void handleResetCount() {
-  if (server.hasArg("plain")) {
-    StaticJsonDocument<200> doc;
-    DeserializationError error = deserializeJson(doc, server.arg("plain"));
-    
-    if (!error) {
-      int index = doc["index"];
-      if (index >= 0 && index < MAX_ITEMS) {
-        inventory[index].count = 0;
-        
-        StaticJsonDocument<200> response;
-        response["success"] = true;
-        response["message"] = "Reset count for " + inventory[index].name;
-        
-        String responseStr;
-        serializeJson(response, responseStr);
-        server.send(200, "application/json", responseStr);
-        return;
-      }
+  DynamicJsonDocument doc(256);
+  deserializeJson(doc, server.arg("plain"));
+  int index = doc["index"];
+  if (index >= 0 && index < MAX_ITEMS) {
+    inventory[index].count = 0;
+  }
+  server.send(200, "text/plain", "Count reset");
+}
+
+void handleReduceCount() {
+  DynamicJsonDocument doc(256);
+  deserializeJson(doc, server.arg("plain"));
+  int index = doc["index"];
+  if (index >= 0 && index < MAX_ITEMS) {
+    // Ensure count doesn't go below zero
+    if (inventory[index].count > 0) {
+      inventory[index].count--;
+      Serial.println("Reduced: " + inventory[index].name + " -> " + String(inventory[index].count));
     }
   }
-  
-  server.send(400, "application/json", "{\"success\":false,\"message\":\"Invalid request\"}");
-} 
+  server.send(200, "text/plain", "Count reduced");
+}
